@@ -43,40 +43,44 @@ def get_all_products():
     # Return original names for matching
     return [row[0] for row in results]
 
-# Extract product from the incoming message with normalization
-def extract_product(message):
+# Extract all products from the incoming message with normalization
+def extract_products(message):
     normalized_msg = normalize(message)
     products = get_all_products()
 
+    matched_products = []
+
     for product in products:
         normalized_product = normalize(product)
-        # Check if any word in the normalized product is in the message
+        # Check if any word in the product name is in the message
         for word in normalized_product.split():
-            if word in normalized_msg:
-                # Debug print to see which product matched
-                print(f"Matched product: '{product}' for message: '{message}'")
-                return product
+            if word in normalized_msg and product not in matched_products:
+                matched_products.append(product)
 
-    # Debug print if no match found
-    print(f"No product matched for message: '{message}'")
-    return None
+    # Debug print
+    if matched_products:
+        print(f"Matched products for message '{message}': {matched_products}")
+    else:
+        print(f"No product matched for message: '{message}'")
+
+    return matched_products
 
 # Handle incoming message and generate response
 def handle_message(message):
-    product = extract_product(message)
+    products = extract_products(message)
 
-    if not product:
+    if not products:
         return "Please specify a valid product available in our shop."
 
-    item = get_product(product)
+    responses = []
+    for product in products:
+        item = get_product(product)
+        if item and item["available"]:
+            responses.append(f"{item['name']} is available in stock.")
+        elif item:
+            responses.append(f"{item['name']} is currently out of stock.")
 
-    if not item:
-        return "Product not available."
-
-    if item["available"]:
-        return f"{item['name']} is available in stock."
-    else:
-        return f"{item['name']} is currently out of stock."
+    return "\n".join(responses)
 
 # Flask route for Twilio webhook
 @app.route("/webhook", methods=["POST"])
