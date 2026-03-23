@@ -1,16 +1,21 @@
 import sqlite3
 import re
+import os
 from flask import Flask, request, Response
 from twilio.twiml.messaging_response import MessagingResponse
 
 app = Flask(__name__)
 
+# --------------------------
 # Helper function to normalize text for matching
+# --------------------------
 def normalize(text):
-    # Lowercase and remove special characters except letters, numbers, and spaces
+    """Lowercase and remove special characters except letters, numbers, spaces."""
     return re.sub(r'[^a-z0-9\s]', '', text.lower())
 
+# --------------------------
 # Get a single product from the database
+# --------------------------
 def get_product(product_name):
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
@@ -24,14 +29,12 @@ def get_product(product_name):
     conn.close()
 
     if result:
-        return {
-            "name": result[0],
-            "available": result[1]
-        }
-
+        return {"name": result[0], "available": result[1]}
     return None
 
-# Get all product names from the database
+# --------------------------
+# Get all products from the database
+# --------------------------
 def get_all_products():
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
@@ -40,24 +43,28 @@ def get_all_products():
     results = cursor.fetchall()
     conn.close()
 
-    # Return original names for matching
-    return [row[0] for row in results]
+    # Return list of tuples (name, available)
+    return results
 
-# Extract all products from the incoming message with normalization
+# --------------------------
+# Extract products from message
+# --------------------------
 def extract_products(message):
+    """
+    Return a list of products whose names partially match any keyword in message.
+    """
     normalized_msg = normalize(message)
-    products = get_all_products()
+    all_products = get_all_products()
 
     matched_products = []
 
-    for product in products:
-        normalized_product = normalize(product)
-        # Check if any word in the product name is in the message
-        for word in normalized_product.split():
-            if word in normalized_msg and product not in matched_products:
-                matched_products.append(product)
+    for product_name, available in all_products:
+        normalized_product = normalize(product_name)
+        # Check if any word in the message is in the product name
+        if any(word in normalized_product for word in normalized_msg.split()):
+            matched_products.append((product_name, available))
 
-    # Debug print
+    # Debug
     if matched_products:
         print(f"Matched products for message '{message}': {matched_products}")
     else:
@@ -65,27 +72,30 @@ def extract_products(message):
 
     return matched_products
 
-# Handle incoming message and generate response
+# --------------------------
+# Handle incoming message
+# --------------------------
 def handle_message(message):
-    products = extract_products(message)
+    matched_products = extract_products(message)
 
-    if not products:
+    if not matched_products:
         return "Please specify a valid product available in our shop."
 
     responses = []
-    for product in products:
-        item = get_product(product)
-        if item and item["available"]:
-            responses.append(f"{item['name']} is available in stock.")
-        elif item:
-            responses.append(f"{item['name']} is currently out of stock.")
+    for name, available in matched_products:
+        if available < 1:
+            responses.append(f"{name} is currently NOT available.")
+        else:
+            responses.append(f"{name} is available in stock.")
 
     return "\n".join(responses)
 
-# Flask route for Twilio webhook
+# --------------------------
+# Flask webhook route for Twilio
+# --------------------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    incoming_msg = request.form.get("Body")
+    incoming_msg = request.form.get("Body", "")
     bot_response = handle_message(incoming_msg)
 
     resp = MessagingResponse()
@@ -93,14 +103,18 @@ def webhook():
 
     return Response(str(resp), mimetype="application/xml")
 
+# --------------------------
 # Simple home route
+# --------------------------
 @app.route("/")
 def home():
     return "Shop chatbot server is running!"
 
-# Run the Flask app
+# --------------------------
+# Main app run
+# --------------------------
 if __name__ == "__main__":
-    # Debug: print first few products on startup to confirm database
+    # Debug: print first 5 products
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
     cursor.execute("SELECT name, available FROM shop LIMIT 5")
@@ -110,4 +124,6 @@ if __name__ == "__main__":
     for row in rows:
         print(row)
 
-    app.run(port=5000, debug=True)
+    # Use PORT env variable for Render deployment
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
